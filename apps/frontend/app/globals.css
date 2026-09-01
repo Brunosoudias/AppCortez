@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-surface text-zinc-100 antialiased;
+}
+
+* {
+  scrollbar-color: theme('colors.surface.border') transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: theme('colors.surface.border');
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-surface-border bg-surface-panel;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-500 shadow-glow;
+  }
+
+  .btn-secondary {
+    @apply btn border border-surface-border bg-surface-raised text-zinc-200 hover:bg-surface-border/60;
+  }
+
+  .btn-ghost {
+    @apply btn text-zinc-400 hover:bg-surface-raised hover:text-zinc-100;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-surface-border bg-surface-raised px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none transition-colors focus:border-brand-500 focus:ring-1 focus:ring-brand-500;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+}

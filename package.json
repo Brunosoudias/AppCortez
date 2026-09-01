@@ -1,0 +1,28 @@
+{
+  "name": "ai-video-cutter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plataforma local-first de edição automática de vídeos com IA (V1: base de frontend + backend, sem IA ainda)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "npm run build:shared",
+    "build:shared": "npm run build --workspace=packages/shared-types && npm run build --workspace=packages/shared-utils",
+    "dev": "npm run build:shared && concurrently -k -n FRONTEND,BACKEND -c blue,green \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "npm run dev --workspace=apps/frontend",
+    "dev:backend": "npm run start:dev --workspace=apps/backend",
+    "build": "npm run build:shared && npm run build --workspace=apps/backend && npm run build --workspace=apps/frontend",
+    "lint": "npm run lint --workspace=apps/frontend && npm run lint --workspace=apps/backend",
+    "format": "prettier --write \"apps/**/*.{ts,tsx}\" \"packages/**/*.ts\"",
+    "setup:storage": "node scripts/ensure-storage.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "prettier": "^3.3.3"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}

@@ -1,0 +1,40 @@
+# docker-compose.yml
+#
+# Uso OPCIONAL — a V1 do projeto roda localmente apenas com:
+#   npm install && npm run dev
+# (desde que Node.js e FFmpeg estejam instalados no host).
+#
+# Este arquivo existe para facilitar, no futuro, rodar tudo em containers
+# (por exemplo quando o FFmpeg/Whisper precisarem de uma imagem com
+# dependências pesadas). Não é necessário para a primeira execução.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    container_name: ai-video-cutter-backend
+    ports:
+      - "3333:3333"
+    environment:
+      - PORT=3333
+      - STORAGE_PATH=/app/storage
+      - FFMPEG_PATH=ffmpeg
+      - FFPROBE_PATH=ffprobe
+      - FRONTEND_URL=http://localhost:3030
+    volumes:
+      - ./storage:/app/storage
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    container_name: ai-video-cutter-frontend
+    ports:
+      - "3030:3030"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3333
+    depends_on:
+      - backend
+    restart: unless-stopped
