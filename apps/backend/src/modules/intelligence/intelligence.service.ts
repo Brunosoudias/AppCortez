@@ -78,13 +78,14 @@ export class IntelligenceService implements OnModuleInit {
           maxMoments: job.result?.maxMoments as number | undefined,
           targetDuration: job.result?.targetDuration as number | undefined,
           format: job.result?.format as ClipAspectRatio | undefined,
+          layout: job.result?.layout as ClipLayout | undefined,
           render: Boolean(job.result?.render),
           burnCaptions: job.result?.burnCaptions as boolean | undefined,
         },
         update,
         job.id,
       );
-      await update({ progress: 95, message: `${clips.length} cortes prontos` });
+      await update({ progress: 95, message: `${clips.length} cortes criados — revise e renderize` });
       return { clipIds: clips.map((c) => c.id), count: clips.length };
     });
 
@@ -151,7 +152,7 @@ export class IntelligenceService implements OnModuleInit {
     return this.jobs.enqueue({
       type: 'auto-clips',
       projectId,
-      message: 'Na fila: cortes automáticos com legendas',
+      message: 'Na fila: cortes automáticos',
       result: { ...opts },
     });
   }
@@ -369,7 +370,7 @@ export class IntelligenceService implements OnModuleInit {
     }
 
     const format = opts.format ?? settings.defaultClipFormat;
-    const layout = opts.layout ?? (format === '9:16' ? 'title' : 'crop');
+    const layout = opts.layout ?? (format === '9:16' ? 'blur' : 'crop');
     const shouldRender = Boolean(opts.render);
     const shouldBurn =
       shouldRender &&

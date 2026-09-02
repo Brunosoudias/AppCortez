@@ -5,13 +5,15 @@ export type ClipAspectRatio = '16:9' | '9:16' | '1:1';
  * - crop  → um enquadramento preenchendo a tela
  * - stack → dois painéis de vídeo (ex.: podcast com 2 pessoas)
  * - title → vídeo em cima + painel de texto/descrição embaixo (estilo Reels)
+ * - blur  → vídeo centralizado com fundo desfocado em cima e embaixo (estilo YouTube Shorts / OpusClip)
  */
-export type ClipLayout = 'crop' | 'stack' | 'title';
+export type ClipLayout = 'crop' | 'stack' | 'title' | 'blur';
 
 export const CLIP_LAYOUT_LABELS: Record<ClipLayout, string> = {
   crop: '9:16 completo',
   stack: 'Dois painéis',
   title: 'Vídeo + texto',
+  blur: 'Estilo Shorts',
 };
 
 export type ClipStatus = 'created' | 'processing' | 'completed' | 'failed';
@@ -56,6 +58,12 @@ export interface Clip {
 
   /** Centro do painel inferior no layout stack (0–1). */
   cropCenterXBottom?: number;
+
+  /**
+   * Escala do vídeo central no layout blur (0.5–2.0).
+   * 1.0 = largura do frame; valores maiores aumentam o vídeo nítido.
+   */
+  centerZoom?: number;
 
   /** Se true, o render deve queimar legendas */
   burnCaptions?: boolean;

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clipsApi } from '@/services/api';
-import type { Clip, CreateClipPayload } from '@/types';
+import type { Clip, ClipLayout, CreateClipPayload } from '@/types';
 
 const POLL_MS = 600;
 
@@ -136,8 +136,32 @@ export function useClips(projectId: string) {
   );
 
   const setClipLayout = useCallback(
-    async (clipId: string, layout: 'crop' | 'title') => {
-      const updated = await clipsApi.setLayout(clipId, layout, true);
+    async (clipId: string, layout: ClipLayout) => {
+      const updated = await clipsApi.setLayout(clipId, layout);
+      setClips((prev) => prev.map((c) => (c.id === clipId ? updated : c)));
+      if (updated.status === 'processing') {
+        startPolling(clipId);
+      }
+      return updated;
+    },
+    [startPolling],
+  );
+
+  const updateClipText = useCallback(
+    async (clipId: string, payload: { title?: string; titleCta?: string }) => {
+      const updated = await clipsApi.updateText(clipId, { ...payload, rerender: true });
+      setClips((prev) => prev.map((c) => (c.id === clipId ? updated : c)));
+      if (updated.status === 'processing') {
+        startPolling(clipId);
+      }
+      return updated;
+    },
+    [startPolling],
+  );
+
+  const setClipZoom = useCallback(
+    async (clipId: string, centerZoom: number, rerender = false) => {
+      const updated = await clipsApi.setZoom(clipId, centerZoom, rerender);
       setClips((prev) => prev.map((c) => (c.id === clipId ? updated : c)));
       if (updated.status === 'processing') {
         startPolling(clipId);
@@ -159,5 +183,7 @@ export function useClips(projectId: string) {
     cancelPending,
     toggleCaptions,
     setClipLayout,
+    updateClipText,
+    setClipZoom,
   };
 }

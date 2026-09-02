@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AutoClipsPayload,
   Clip,
+  ClipLayout,
   CreateClipPayload,
   CreateProjectPayload,
   Job,
@@ -155,10 +156,22 @@ export const clipsApi = {
       body: JSON.stringify({ enabled }),
     }),
 
-  setLayout: (id: string, layout: 'crop' | 'title', rerender?: boolean) =>
+  setLayout: (id: string, layout: ClipLayout, rerender?: boolean) =>
     request<Clip>(`/clips/${id}/layout`, {
       method: 'PATCH',
       body: JSON.stringify({ layout, rerender }),
+    }),
+
+  updateText: (id: string, payload: { title?: string; titleCta?: string; rerender?: boolean }) =>
+    request<Clip>(`/clips/${id}/text`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  setZoom: (id: string, centerZoom: number, rerender?: boolean) =>
+    request<Clip>(`/clips/${id}/zoom`, {
+      method: 'PATCH',
+      body: JSON.stringify({ centerZoom, rerender }),
     }),
 
   applyFramingToProject: (

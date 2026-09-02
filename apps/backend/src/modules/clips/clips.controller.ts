@@ -6,6 +6,8 @@ import { CreateClipDto } from './dto/create-clip.dto';
 import { UpdateClipFramingDto } from './dto/update-clip-framing.dto';
 import { UpdateClipCaptionsDto } from './dto/update-clip-captions.dto';
 import { UpdateClipLayoutDto } from './dto/update-clip-layout.dto';
+import { UpdateClipTextDto } from './dto/update-clip-text.dto';
+import { UpdateClipZoomDto } from './dto/update-clip-zoom.dto';
 import { ClipsService } from './clips.service';
 
 @Controller()
@@ -58,6 +60,18 @@ export class ClipsController {
   @Patch('clips/:id/layout')
   setLayout(@Param('id') id: string, @Body() dto: UpdateClipLayoutDto): Promise<Clip> {
     return this.clipsService.updateLayout(id, dto.layout, dto.rerender);
+  }
+
+  /** Texto do painel inferior (layout title). */
+  @Patch('clips/:id/text')
+  setText(@Param('id') id: string, @Body() dto: UpdateClipTextDto): Promise<Clip> {
+    return this.clipsService.updateText(id, dto);
+  }
+
+  /** Zoom do vídeo central (layout blur). */
+  @Patch('clips/:id/zoom')
+  setZoom(@Param('id') id: string, @Body() dto: UpdateClipZoomDto): Promise<Clip> {
+    return this.clipsService.updateCenterZoom(id, dto.centerZoom, dto.rerender);
   }
 
   @Post('projects/:id/clips/framing')

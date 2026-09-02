@@ -2,6 +2,16 @@
 
 import { useState } from 'react';
 import { Brain, Clapperboard, FileOutput, Loader2, Mic, Wand2 } from 'lucide-react';
+import { CLIP_LAYOUT_LABELS, type ClipLayout } from '@/types';
+
+const AUTO_CLIP_LAYOUTS: ClipLayout[] = ['blur', 'title', 'stack', 'crop'];
+
+const LAYOUT_HINTS: Record<ClipLayout, string> = {
+  blur: 'Vídeo centralizado com fundo desfocado (estilo Shorts)',
+  title: 'Vídeo em cima, descrição embaixo',
+  stack: 'Dois painéis de vídeo empilhados',
+  crop: 'Vídeo preenchendo a tela 9:16 inteira',
+};
 
 interface AiActionsPanelProps {
   busy?: boolean;
@@ -12,7 +22,7 @@ interface AiActionsPanelProps {
   videoReady?: boolean;
   onTranscribe: () => Promise<void>;
   onAnalyze: () => Promise<void>;
-  onGenerateViralClips: () => Promise<void>;
+  onGenerateViralClips: (layout: ClipLayout) => Promise<void>;
   onExportBatch: () => Promise<void>;
 }
 
@@ -29,6 +39,7 @@ export function AiActionsPanel({
   onExportBatch,
 }: AiActionsPanelProps) {
   const [error, setError] = useState<string | null>(null);
+  const [layout, setLayout] = useState<ClipLayout>('blur');
 
   async function run(fn: () => Promise<void>) {
     setError(null);
@@ -46,14 +57,38 @@ export function AiActionsPanel({
         <div>
           <p className="text-sm font-semibold text-zinc-100">Cortes automáticos</p>
           <p className="text-xs text-zinc-500">
-            A IA analisa o vídeo, escolhe os melhores momentos, gera MP4 9:16 com legendas em
-            português e mostra cada um em um card para você baixar.
+            A IA analisa o vídeo, escolhe os melhores momentos e mostra cada corte em prévia.
+            Ajuste zoom e layout, depois renderize manualmente o MP4.
           </p>
         </div>
       </div>
 
+      <div className="mb-3">
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+          Tipo de corte
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {AUTO_CLIP_LAYOUTS.map((l) => (
+            <button
+              key={l}
+              type="button"
+              onClick={() => setLayout(l)}
+              disabled={busy}
+              title={LAYOUT_HINTS[l]}
+              className={
+                l === layout
+                  ? 'rounded-md bg-brand-600 px-2.5 py-1 text-xs font-medium text-white'
+                  : 'rounded-md border border-surface-border px-2.5 py-1 text-xs font-medium text-zinc-400 hover:text-zinc-200 disabled:opacity-50'
+              }
+            >
+              {CLIP_LAYOUT_LABELS[l]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <button
-        onClick={() => void run(onGenerateViralClips)}
+        onClick={() => void run(() => onGenerateViralClips(layout))}
         disabled={busy || !videoReady}
         className="btn-primary w-full justify-center !py-3 text-sm sm:w-auto"
       >

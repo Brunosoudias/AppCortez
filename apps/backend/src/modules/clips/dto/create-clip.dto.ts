@@ -15,7 +15,7 @@ export class CreateClipDto {
   format?: ClipAspectRatio;
 
   @IsOptional()
-  @IsIn(['crop', 'stack', 'title'])
+  @IsIn(['crop', 'stack', 'title', 'blur'])
   layout?: ClipLayout;
 
   @IsOptional()
