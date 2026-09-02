@@ -1,33 +1,296 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Captions, Download, Flame, Loader2, Play, Trash2, XCircle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  Captions,
+  Download,
+  Flame,
+  Loader2,
+  Pause,
+  Play,
+  Save,
+  Trash2,
+  Volume2,
+  VolumeX,
+  XCircle,
+  ZoomIn,
+} from 'lucide-react';
 import { CLIP_STATUS_COLOR, CLIP_STATUS_LABEL, cn, formatTime } from '@/lib/utils';
 import { clipsApi } from '@/services/api';
-import type { Clip, ClipLayout } from '@/types';
+import { CLIP_LAYOUT_LABELS, type Clip, type ClipLayout, type Transcript } from '@/types';
+import { ClipCaptionsModal, segmentsForClip } from './ClipCaptionsModal';
 
 interface ClipCardProps {
   clip: Clip;
   index: number;
+  transcript?: Transcript | null;
+  sourceVideoUrl?: string;
   onRender: (clipId: string) => Promise<Clip>;
   onToggleCaptions?: (clipId: string, enabled: boolean) => Promise<Clip>;
-  onSetLayout?: (clipId: string, layout: 'crop' | 'title') => Promise<Clip>;
+  onSetLayout?: (clipId: string, layout: ClipLayout) => Promise<Clip>;
+  onSetZoom?: (clipId: string, centerZoom: number) => Promise<Clip>;
+  onUpdateText?: (clipId: string, payload: { title?: string; titleCta?: string }) => Promise<Clip>;
   onDelete?: (clipId: string) => Promise<void>;
   onCancel?: (clipId: string) => Promise<void>;
 }
 
-const CARD_LAYOUTS: Array<{ id: Extract<ClipLayout, 'crop' | 'title'>; label: string; hint: string }> = [
-  { id: 'title', label: 'Vídeo + texto', hint: 'Vídeo em cima, painel preto com descrição embaixo' },
-  { id: 'crop', label: '9:16 completo', hint: 'Vídeo preenchendo a tela inteira' },
+const CARD_LAYOUTS: Array<{ id: ClipLayout; label: string; hint: string }> = [
+  { id: 'blur', label: CLIP_LAYOUT_LABELS.blur, hint: 'Vídeo no centro com fundo desfocado — igual Shorts do YouTube' },
+  { id: 'title', label: CLIP_LAYOUT_LABELS.title, hint: 'Vídeo em cima, painel preto com descrição embaixo' },
+  { id: 'stack', label: CLIP_LAYOUT_LABELS.stack, hint: 'Dois painéis de vídeo empilhados com enquadramentos independentes' },
+  { id: 'crop', label: CLIP_LAYOUT_LABELS.crop, hint: 'Vídeo preenchendo a tela inteira em 9:16' },
 ];
 
-export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout, onDelete, onCancel }: ClipCardProps) {
+const DEFAULT_TITLE_CTA = 'DESLIZE PARA SABER MAIS';
+
+function useClipSegmentPlayback(startTime: number, endTime: number) {
+  const clipDuration = Math.max(0, endTime - startTime);
+  const [relativeTime, setRelativeTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+
+  const syncToStart = (videos: Array<HTMLVideoElement | null>) => {
+    for (const el of videos) {
+      if (el) el.currentTime = startTime;
+    }
+    setRelativeTime(0);
+  };
+
+  const handleTimeUpdate = (videos: Array<HTMLVideoElement | null>, source: HTMLVideoElement) => {
+    const rel = Math.max(0, Math.min(clipDuration, source.currentTime - startTime));
+    setRelativeTime(rel);
+    if (source.currentTime >= endTime - 0.05) {
+      syncToStart(videos);
+      for (const el of videos) {
+        void el?.play().catch(() => undefined);
+      }
+    }
+  };
+
+  const togglePlay = (videos: Array<HTMLVideoElement | null>) => {
+    const primary = videos.find(Boolean);
+    if (!primary) return;
+    if (primary.paused) {
+      for (const el of videos) void el?.play().catch(() => undefined);
+      setPlaying(true);
+    } else {
+      for (const el of videos) el?.pause();
+      setPlaying(false);
+    }
+  };
+
+  const handlePlayState = (isPlaying: boolean) => setPlaying(isPlaying);
+
+  return { clipDuration, relativeTime, playing, syncToStart, handleTimeUpdate, togglePlay, handlePlayState };
+}
+
+function ClipPreviewControls({
+  relativeTime,
+  clipDuration,
+  playing,
+  audioMuted,
+  onTogglePlay,
+  onToggleMute,
+}: {
+  relativeTime: number;
+  clipDuration: number;
+  playing: boolean;
+  audioMuted: boolean;
+  onTogglePlay: () => void;
+  onToggleMute: () => void;
+}) {
+  const progressPct = clipDuration > 0 ? Math.min(100, (relativeTime / clipDuration) * 100) : 0;
+
+  return (
+    <div className="pointer-events-auto absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-2.5 pt-8">
+      <div className="mb-2 h-1 overflow-hidden rounded-full bg-white/20">
+        <div className="h-full rounded-full bg-brand-500 transition-[width] duration-100" style={{ width: `${progressPct}%` }} />
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onTogglePlay}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"
+          aria-label={playing ? 'Pausar prévia' : 'Reproduzir prévia'}
+        >
+          {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+        </button>
+        <button
+          type="button"
+          onClick={onToggleMute}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"
+          aria-label={audioMuted ? 'Ativar áudio' : 'Silenciar'}
+        >
+          {audioMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+        </button>
+        <span className="ml-auto font-mono text-[11px] text-white/90">
+          {formatTime(relativeTime)} / {formatTime(clipDuration)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function useClipPreviewAudio(audioRef: RefObject<HTMLVideoElement | null>) {
+  const [audioMuted, setAudioMuted] = useState(true);
+
+  function toggleMute() {
+    const el = audioRef.current;
+    const nextMuted = !audioMuted;
+    setAudioMuted(nextMuted);
+    if (el) {
+      el.muted = nextMuted;
+      if (!nextMuted) void el.play().catch(() => undefined);
+    }
+  }
+
+  return { audioMuted, toggleMute };
+}
+
+interface BlurZoomPreviewProps {
+  src: string;
+  startTime: number;
+  endTime: number;
+  centerZoom: number;
+  cropCenterX?: number;
+}
+
+function BlurZoomPreview({ src, startTime, endTime, centerZoom, cropCenterX = 0.5 }: BlurZoomPreviewProps) {
+  const bgRef = useRef<HTMLVideoElement>(null);
+  const fgRef = useRef<HTMLVideoElement>(null);
+  const objectPosition = `${Math.round(cropCenterX * 100)}% 50%`;
+  const { audioMuted, toggleMute } = useClipPreviewAudio(fgRef);
+  const { clipDuration, relativeTime, playing, syncToStart, handleTimeUpdate, togglePlay, handlePlayState } =
+    useClipSegmentPlayback(startTime, endTime);
+
+  const videos = () => [bgRef.current, fgRef.current];
+
+  function handleLoadedMetadata() {
+    syncToStart(videos());
+    void bgRef.current?.play().catch(() => undefined);
+    void fgRef.current?.play().catch(() => undefined);
+    handlePlayState(true);
+  }
+
+  return (
+    <div className="relative h-full w-full overflow-hidden bg-black">
+      <video
+        ref={bgRef}
+        src={src}
+        muted
+        playsInline
+        autoPlay
+        preload="metadata"
+        onLoadedMetadata={handleLoadedMetadata}
+        onPlay={() => handlePlayState(true)}
+        onPause={() => handlePlayState(false)}
+        onTimeUpdate={(e) => handleTimeUpdate(videos(), e.currentTarget)}
+        className="absolute inset-0 h-full w-full scale-110 object-cover blur-2xl brightness-[0.93] saturate-[1.08]"
+        style={{ objectPosition }}
+      />
+      <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+        <video
+          ref={fgRef}
+          src={src}
+          muted={audioMuted}
+          playsInline
+          autoPlay
+          preload="metadata"
+          onLoadedMetadata={handleLoadedMetadata}
+          onPlay={() => handlePlayState(true)}
+          onPause={() => handlePlayState(false)}
+          onTimeUpdate={(e) => handleTimeUpdate(videos(), e.currentTarget)}
+          className="block h-auto w-full max-w-none"
+          style={{
+            transform: `scale(${centerZoom})`,
+            transformOrigin: 'center center',
+          }}
+        />
+      </div>
+      <ClipPreviewControls
+        relativeTime={relativeTime}
+        clipDuration={clipDuration}
+        playing={playing}
+        audioMuted={audioMuted}
+        onTogglePlay={() => togglePlay(videos())}
+        onToggleMute={toggleMute}
+      />
+    </div>
+  );
+}
+
+function ClipSegmentPreview({ src, startTime, endTime }: { src: string; startTime: number; endTime: number }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const { audioMuted, toggleMute } = useClipPreviewAudio(ref);
+  const { clipDuration, relativeTime, playing, syncToStart, handleTimeUpdate, togglePlay, handlePlayState } =
+    useClipSegmentPlayback(startTime, endTime);
+
+  const videos = () => [ref.current];
+
+  return (
+    <div className="relative h-full w-full">
+      <video
+        ref={ref}
+        src={src}
+        muted={audioMuted}
+        playsInline
+        autoPlay
+        preload="metadata"
+        onLoadedMetadata={() => {
+          syncToStart(videos());
+          void ref.current?.play().catch(() => undefined);
+          handlePlayState(true);
+        }}
+        onPlay={() => handlePlayState(true)}
+        onPause={() => handlePlayState(false)}
+        onTimeUpdate={(e) => handleTimeUpdate(videos(), e.currentTarget)}
+        className="h-full w-full object-contain"
+      />
+      <ClipPreviewControls
+        relativeTime={relativeTime}
+        clipDuration={clipDuration}
+        playing={playing}
+        audioMuted={audioMuted}
+        onTogglePlay={() => togglePlay(videos())}
+        onToggleMute={toggleMute}
+      />
+    </div>
+  );
+}
+
+export function ClipCard({ clip, index, transcript, sourceVideoUrl, onRender, onToggleCaptions, onSetLayout, onSetZoom, onUpdateText, onDelete, onCancel }: ClipCardProps) {
   const [rendering, setRendering] = useState(false);
+  const [captionsModalOpen, setCaptionsModalOpen] = useState(false);
   const [togglingCaptions, setTogglingCaptions] = useState(false);
   const [changingLayout, setChangingLayout] = useState(false);
+  const [savingZoom, setSavingZoom] = useState(false);
+  const [zoomDraft, setZoomDraft] = useState(clip.centerZoom ?? 1);
+  const [lastRenderedZoom, setLastRenderedZoom] = useState(clip.centerZoom ?? 1);
+  const zoomDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [savingText, setSavingText] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(clip.title ?? '');
+  const [ctaDraft, setCtaDraft] = useState(clip.titleCta ?? DEFAULT_TITLE_CTA);
   const [deleting, setDeleting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTitleDraft(clip.title ?? '');
+    setCtaDraft(clip.titleCta ?? DEFAULT_TITLE_CTA);
+  }, [clip.id, clip.title, clip.titleCta]);
+
+  useEffect(() => {
+    setZoomDraft(clip.centerZoom ?? 1);
+    setLastRenderedZoom(clip.centerZoom ?? 1);
+  }, [clip.id]);
+
+  const prevStatusRef = useRef(clip.status);
+  useEffect(() => {
+    if (prevStatusRef.current === 'processing' && clip.status === 'completed') {
+      setLastRenderedZoom(clip.centerZoom ?? 1);
+      setZoomDraft(clip.centerZoom ?? 1);
+    }
+    prevStatusRef.current = clip.status;
+  }, [clip.status, clip.centerZoom]);
 
   const mediaUrl = useMemo(() => {
     if (clip.status !== 'completed') return null;
@@ -36,6 +299,10 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
 
   const captionsOn = Boolean(
     clip.captionsFile || (clip.outputFile && clip.outputFile.includes('.captioned')),
+  );
+  const clipSegments = useMemo(
+    () => segmentsForClip(transcript, clip.startTime, clip.endTime),
+    [transcript, clip.startTime, clip.endTime],
   );
 
   async function handleRender() {
@@ -63,8 +330,8 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
     }
   }
 
-  async function handleSetLayout(layout: 'crop' | 'title') {
-    if (!onSetLayout || layout === (clip.layout ?? 'title')) return;
+  async function handleSetLayout(layout: ClipLayout) {
+    if (!onSetLayout || layout === (clip.layout ?? 'blur')) return;
     setChangingLayout(true);
     setLocalError(null);
     try {
@@ -73,6 +340,52 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
       setLocalError(err instanceof Error ? err.message : 'Falha ao alterar layout');
     } finally {
       setChangingLayout(false);
+    }
+  }
+
+  async function saveZoom(centerZoom: number) {
+    if (!onSetZoom) return;
+    const saved = clip.centerZoom ?? 1;
+    if (Math.abs(centerZoom - saved) < 0.01) return;
+    setSavingZoom(true);
+    setLocalError(null);
+    try {
+      await onSetZoom(clip.id, centerZoom);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Falha ao salvar zoom');
+      setZoomDraft(saved);
+    } finally {
+      setSavingZoom(false);
+    }
+  }
+
+  function handleZoomChange(value: number) {
+    setZoomDraft(value);
+    if (zoomDebounceRef.current) clearTimeout(zoomDebounceRef.current);
+    zoomDebounceRef.current = setTimeout(() => {
+      void saveZoom(value);
+    }, 600);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (zoomDebounceRef.current) clearTimeout(zoomDebounceRef.current);
+    };
+  }, []);
+
+  async function handleSaveText() {
+    if (!onUpdateText) return;
+    setSavingText(true);
+    setLocalError(null);
+    try {
+      await onUpdateText(clip.id, {
+        title: titleDraft.trim() || undefined,
+        titleCta: ctaDraft.trim() || undefined,
+      });
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Falha ao salvar texto');
+    } finally {
+      setSavingText(false);
     }
   }
 
@@ -103,19 +416,38 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
     }
   }
 
-  const isProcessing = clip.status === 'processing' || rendering || togglingCaptions || changingLayout;
+  const isProcessing = clip.status === 'processing' || rendering || togglingCaptions || changingLayout || savingText;
   const isBusy = isProcessing || deleting || cancelling;
   const progress = typeof clip.progress === 'number' ? clip.progress : 0;
   const isReady = clip.status === 'completed';
+  const isCreated = clip.status === 'created';
   const isFailed = clip.status === 'failed';
-  const activeLayout: 'crop' | 'title' =
-    clip.layout === 'crop' ? 'crop' : clip.layout === 'stack' ? 'title' : clip.layout ?? 'title';
+  const activeLayout: ClipLayout = clip.layout ?? 'blur';
   const showLayoutPicker = clip.format === '9:16' && onSetLayout;
+  const showZoomControl = activeLayout === 'blur' && onSetZoom;
+  const showTextEditor = activeLayout === 'title' && onUpdateText;
+  const canAdjustBeforeRender = isCreated || isReady;
+  const zoomNeedsRender = showZoomControl && isReady && Math.abs(zoomDraft - lastRenderedZoom) > 0.01;
+  const showBlurPreview =
+    Boolean(sourceVideoUrl) && activeLayout === 'blur' && (isCreated || zoomNeedsRender);
+  const showSegmentPreview = Boolean(sourceVideoUrl) && isCreated && activeLayout !== 'blur';
+  const textDirty =
+    titleDraft !== (clip.title ?? '') || ctaDraft !== (clip.titleCta ?? DEFAULT_TITLE_CTA);
 
   return (
     <article className="card flex flex-col overflow-hidden p-0">
       <div className="relative aspect-[9/16] w-full bg-black">
-        {isReady && mediaUrl ? (
+        {showBlurPreview && sourceVideoUrl ? (
+          <BlurZoomPreview
+            src={sourceVideoUrl}
+            startTime={clip.startTime}
+            endTime={clip.endTime}
+            centerZoom={zoomDraft}
+            cropCenterX={clip.cropCenterX}
+          />
+        ) : showSegmentPreview && sourceVideoUrl ? (
+          <ClipSegmentPreview src={sourceVideoUrl} startTime={clip.startTime} endTime={clip.endTime} />
+        ) : isReady && mediaUrl ? (
           <video
             key={mediaUrl}
             src={mediaUrl}
@@ -132,9 +464,11 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
                 <p className="text-xs text-zinc-400">
                   {changingLayout
                     ? 'Alterando layout…'
-                    : togglingCaptions || (clip.burnCaptions && captionsOn === false && clip.status === 'processing')
-                      ? 'Aplicando legendas…'
-                      : 'Renderizando…'}
+                    : savingText
+                      ? 'Aplicando texto…'
+                      : togglingCaptions || (clip.burnCaptions && captionsOn === false && clip.status === 'processing')
+                        ? 'Aplicando legendas…'
+                        : 'Renderizando…'}
                 </p>
                 <div className="h-1.5 w-2/3 overflow-hidden rounded-full bg-surface-raised">
                   <div
@@ -174,7 +508,7 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
 
         {(onDelete || onCancel) && (
           <div className="absolute right-3 top-3 z-10 flex flex-col gap-1.5">
-            {!isReady && onCancel && (
+            {!isReady && clip.status === 'processing' && onCancel && (
               <button
                 type="button"
                 onClick={handleCancel}
@@ -213,15 +547,51 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
           <p className="mt-0.5 font-mono text-[11px] text-zinc-500">
             {formatTime(clip.startTime)} → {formatTime(clip.endTime)} · {clip.duration.toFixed(1)}s ·{' '}
             {clip.format}
-            {clip.layout
-              ? ` · ${clip.layout === 'title' ? 'vídeo+texto' : clip.layout === 'stack' ? '2 painéis' : '9:16 completo'}`
-              : ''}
+            {clip.layout ? ` · ${CLIP_LAYOUT_LABELS[clip.layout].toLowerCase()}` : ''}
           </p>
           <p className="mt-2 line-clamp-2 text-sm text-zinc-300">
             {clip.title ? clip.title : 'Corte automático'}
           </p>
           {clip.reason && <p className="mt-1 line-clamp-2 text-xs text-zinc-600">{clip.reason}</p>}
         </div>
+
+        {showTextEditor && (
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Texto no vídeo</p>
+            <label className="block text-xs text-zinc-400">
+              <span className="mb-1 block text-zinc-300">Descrição (painel de baixo)</span>
+              <textarea
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                rows={3}
+                maxLength={200}
+                disabled={isBusy}
+                placeholder="Ex.: O que você já foi lá?"
+                className="w-full resize-none rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-brand-500 focus:outline-none disabled:opacity-50"
+              />
+            </label>
+            <label className="block text-xs text-zinc-400">
+              <span className="mb-1 block text-zinc-300">CTA (opcional)</span>
+              <input
+                type="text"
+                value={ctaDraft}
+                onChange={(e) => setCtaDraft(e.target.value)}
+                maxLength={80}
+                disabled={isBusy}
+                className="w-full rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm text-zinc-100 focus:border-brand-500 focus:outline-none disabled:opacity-50"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void handleSaveText()}
+              disabled={isBusy || !textDirty}
+              className="btn-secondary w-full justify-center !py-2 text-xs"
+            >
+              {savingText ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              Aplicar no vídeo
+            </button>
+          </div>
+        )}
 
         {showLayoutPicker && (
           <div>
@@ -244,6 +614,44 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {showZoomControl && (
+          <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                <span className="inline-flex items-center gap-1">
+                  <ZoomIn size={12} />
+                  Tamanho do vídeo
+                </span>
+              </p>
+              <span className="font-mono text-[11px] text-zinc-400">
+                {Math.round(zoomDraft * 100)}%
+                {savingZoom && <span className="ml-1 text-zinc-600">· salvando</span>}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={50}
+              max={200}
+              step={5}
+              value={Math.round(zoomDraft * 100)}
+              disabled={isBusy || !canAdjustBeforeRender}
+              onChange={(e) => handleZoomChange(Number(e.target.value) / 100)}
+              className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-brand-500 disabled:cursor-not-allowed disabled:opacity-50 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-brand-500"
+            />
+            <div className="mt-1 flex justify-between text-[10px] text-zinc-600">
+              <span>Menor</span>
+              <span>Maior</span>
+            </div>
+            {(zoomNeedsRender || isCreated) && (
+              <p className="mt-1.5 text-[10px] text-amber-300">
+                {isCreated
+                  ? 'Prévia ao vivo — ajuste o zoom e clique em "Renderizar agora" para gerar o MP4.'
+                  : 'Prévia ao vivo — clique em "Renderizar com novo zoom" para gerar o MP4.'}
+              </p>
+            )}
           </div>
         )}
 
@@ -272,11 +680,44 @@ export function ClipCard({ clip, index, onRender, onToggleCaptions, onSetLayout,
           </label>
         )}
 
+        <button
+          type="button"
+          onClick={() => setCaptionsModalOpen(true)}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised/40 px-3 py-2.5 text-left transition hover:border-brand-500/40 hover:bg-surface-raised/70"
+        >
+          <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-zinc-200">
+            <Captions size={14} className="shrink-0 text-brand-400" />
+            Ver legendas com timestamps
+          </span>
+          <span className="shrink-0 rounded-full bg-surface-raised px-2 py-0.5 font-mono text-[10px] text-zinc-500">
+            {clipSegments.length > 0 ? `${clipSegments.length} trecho${clipSegments.length === 1 ? '' : 's'}` : '—'}
+          </span>
+        </button>
+
+        <ClipCaptionsModal
+          open={captionsModalOpen}
+          onClose={() => setCaptionsModalOpen(false)}
+          clipIndex={index}
+          startTime={clip.startTime}
+          endTime={clip.endTime}
+          transcript={transcript}
+        />
+
         {localError && <p className="text-xs text-red-400">{localError}</p>}
 
         <div className="mt-auto flex flex-col gap-2">
           {isReady ? (
             <>
+              {zoomNeedsRender && (
+                <button
+                  onClick={handleRender}
+                  disabled={isBusy}
+                  className="btn-primary w-full justify-center !py-2 text-sm"
+                >
+                  <Play size={16} />
+                  Renderizar com novo zoom
+                </button>
+              )}
               <a
                 href={clipsApi.downloadUrl(clip.id)}
                 className="btn-primary w-full justify-center !py-2 text-sm"

@@ -30,6 +30,7 @@ export interface CutAndFitOptions extends CutVideoOptions {
    * `crop`  = um enquadramento 9:16.
    * `stack` = dois painéis de vídeo empilhados (podcast).
    * `title` = vídeo em cima + painel de texto/descrição embaixo.
+   * `blur`  = vídeo centralizado + fundo desfocado nas bordas (OpusClip).
    */
   layout?: ClipLayout;
   /** Centro X do painel inferior no layout stack (0–1). */
@@ -40,6 +41,10 @@ export interface CutAndFitOptions extends CutVideoOptions {
   titleText?: string;
   /** CTA pequeno sob o título (layout title). */
   titleCta?: string;
+  /**
+   * Escala do vídeo central no layout blur (0.5–2.0). Padrão: 1.0.
+   */
+  centerZoom?: number;
   /** Permite matar o FFmpeg deste render (ex.: id do corte). */
   abortKey?: string;
 }
@@ -191,6 +196,7 @@ export class FfmpegService {
       cropXExpressionBottom,
       titleText,
       titleCta,
+      centerZoom = 1,
       abortKey,
     } = options;
     const duration = endTime - startTime;
@@ -218,6 +224,22 @@ export class FfmpegService {
         `[vbot]scale=${halfW}:${halfH}:force_original_aspect_ratio=increase,` +
         `crop=${halfW}:${halfH}:(iw-${halfW})*(${botX}):(ih-${halfH})*0.55[bot];` +
         `[top][bot]vstack=inputs=2[vout]`;
+      filterArgs = ['-filter_complex', fc, '-map', '[vout]', '-map', '0:a?'];
+    } else if (layout === 'blur' && format === '9:16') {
+      // Estilo YouTube Shorts / OpusClip: vídeo nítido centralizado + fundo cover bem desfocado
+      const W = target.width;
+      const H = target.height;
+      const blurW = Math.max(64, Math.floor(W / 8));
+      const zoom = Math.min(2, Math.max(0.5, centerZoom));
+      const fgW = Math.round(W * zoom);
+      const fc =
+        `[0:v]split=2[bg][fg];` +
+        `[bg]scale=${W}:${H}:force_original_aspect_ratio=increase,` +
+        `crop=${W}:${H}:(iw-${W})*(${xPart}):(ih-${H})/2,` +
+        `scale=${blurW}:-2,scale=${W}:${H}:flags=bilinear,` +
+        `boxblur=40:20,eq=brightness=-0.07:saturation=1.08[blurred];` +
+        `[fg]scale=${fgW}:-2:force_original_aspect_ratio=decrease[sharp];` +
+        `[blurred][sharp]overlay=(W-w)/2:(H-h)/2[vout]`;
       filterArgs = ['-filter_complex', fc, '-map', '[vout]', '-map', '0:a?'];
     } else if (layout === 'title' && format === '9:16') {
       // Vídeo em cima (~50%) + painel escuro com título/descrição embaixo (pad + ASS)

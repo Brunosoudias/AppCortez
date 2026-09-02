@@ -2,14 +2,18 @@
 
 import { Loader2, Scissors, XCircle } from 'lucide-react';
 import { ClipCard } from './ClipCard';
-import type { Clip } from '@/types';
+import type { Clip, ClipLayout, Transcript } from '@/types';
 
 interface ClipListProps {
   clips: Clip[];
+  transcript?: Transcript | null;
   generating?: boolean;
+  sourceVideoUrl?: string;
   onRender: (clipId: string) => Promise<Clip>;
   onToggleCaptions?: (clipId: string, enabled: boolean) => Promise<Clip>;
-  onSetLayout?: (clipId: string, layout: 'crop' | 'title') => Promise<Clip>;
+  onSetLayout?: (clipId: string, layout: ClipLayout) => Promise<Clip>;
+  onSetZoom?: (clipId: string, centerZoom: number) => Promise<Clip>;
+  onUpdateText?: (clipId: string, payload: { title?: string; titleCta?: string }) => Promise<Clip>;
   onDelete?: (clipId: string) => Promise<void>;
   onCancel?: (clipId: string) => Promise<void>;
   onCancelPending?: () => Promise<void>;
@@ -17,10 +21,14 @@ interface ClipListProps {
 
 export function ClipList({
   clips,
+  transcript,
   generating,
+  sourceVideoUrl,
   onRender,
   onToggleCaptions,
   onSetLayout,
+  onSetZoom,
+  onUpdateText,
   onDelete,
   onCancel,
   onCancelPending,
@@ -75,9 +83,13 @@ export function ClipList({
               key={clip.id}
               clip={clip}
               index={index}
+              transcript={transcript}
+              sourceVideoUrl={sourceVideoUrl}
               onRender={onRender}
               onToggleCaptions={onToggleCaptions}
               onSetLayout={onSetLayout}
+              onSetZoom={onSetZoom}
+              onUpdateText={onUpdateText}
               onDelete={onDelete}
               onCancel={onCancel}
             />

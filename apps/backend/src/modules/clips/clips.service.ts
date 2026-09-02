@@ -8,7 +8,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import type { Clip, Transcript } from '@ai-video-cutter/shared-types';
+import type { Clip, ClipLayout, Transcript } from '@ai-video-cutter/shared-types';
 import { generateId } from '@ai-video-cutter/shared-utils';
 import { StorageService } from '../../common/storage/storage.service';
 import {
@@ -24,6 +24,7 @@ import {
   type CaptionService,
 } from '../processing/interfaces/caption-service.interface';
 import type { CreateClipDto } from './dto/create-clip.dto';
+import type { UpdateClipTextDto } from './dto/update-clip-text.dto';
 import type { ClipRepository } from './repositories/clip.repository.interface';
 import { CLIP_REPOSITORY } from './tokens/clip-repository.token';
 
@@ -67,7 +68,7 @@ export class ClipsService {
       score: dto.score,
       reason: dto.reason,
       format: dto.format ?? '16:9',
-      layout: dto.layout ?? (dto.format === '9:16' ? 'title' : 'crop'),
+      layout: dto.layout ?? (dto.format === '9:16' ? 'blur' : 'crop'),
       cropCenterX: dto.cropCenterX,
       cropCenterXBottom: dto.cropCenterXBottom,
       status: 'created',
@@ -92,6 +93,14 @@ export class ClipsService {
     return clip;
   }
 
+  /** Atualiza o corte apenas se ainda existir (evita crash quando excluído durante render). */
+  private async updateClipIfExists(clipId: string, patch: Partial<Clip>): Promise<boolean> {
+    const existing = await this.repository.findById(clipId);
+    if (!existing) return false;
+    await this.repository.update(clipId, patch);
+    return true;
+  }
+
   async update(clipId: string, patch: Partial<Clip>): Promise<Clip> {
     await this.findById(clipId);
     return this.repository.update(clipId, patch);
@@ -112,10 +121,10 @@ export class ClipsService {
     return this.repository.update(clipId, patch);
   }
 
-  /** Altera layout vertical (9:16 completo vs vídeo + painel de texto) e opcionalmente re-renderiza. */
+  /** Altera layout vertical (crop / stack / title) e opcionalmente re-renderiza. */
   async updateLayout(
     clipId: string,
-    layout: 'crop' | 'title',
+    layout: ClipLayout,
     rerender?: boolean,
   ): Promise<Clip> {
     const clip = await this.findById(clipId);
@@ -131,6 +140,82 @@ export class ClipsService {
 
     const updated = await this.repository.update(clipId, {
       layout,
+      ...(shouldRerender
+        ? {
+            status: 'processing' as const,
+            progress: 0,
+            outputFile: undefined,
+            captionsFile: undefined,
+            errorMessage: undefined,
+          }
+        : {}),
+    });
+
+    if (shouldRerender) {
+      void this.runRender(clipId);
+    }
+
+    return updated;
+  }
+
+  /** Atualiza título/CTA do painel de texto (layout title) e opcionalmente re-renderiza. */
+  async updateText(clipId: string, dto: UpdateClipTextDto): Promise<Clip> {
+    const clip = await this.findById(clipId);
+
+    if (clip.status === 'processing' || this.rendering.has(clipId)) {
+      throw new BadRequestException('Aguarde o processamento atual terminar');
+    }
+
+    const layout = clip.layout ?? (clip.format === '9:16' ? 'blur' : 'crop');
+    if (layout !== 'title') {
+      throw new BadRequestException('Edição de texto só se aplica ao layout "Vídeo + texto"');
+    }
+
+    const title = dto.title?.trim();
+    const titleCta = dto.titleCta?.trim();
+    const shouldRerender = dto.rerender ?? clip.status === 'completed';
+
+    const updated = await this.repository.update(clipId, {
+      title: title || undefined,
+      titleCta: titleCta || undefined,
+      ...(shouldRerender
+        ? {
+            status: 'processing' as const,
+            progress: 0,
+            outputFile: undefined,
+            captionsFile: undefined,
+            errorMessage: undefined,
+          }
+        : {}),
+    });
+
+    if (shouldRerender) {
+      void this.runRender(clipId);
+    }
+
+    return updated;
+  }
+
+  /** Ajusta o zoom do vídeo central (layout blur). Re-renderiza apenas se `rerender` for true. */
+  async updateCenterZoom(clipId: string, centerZoom: number, rerender?: boolean): Promise<Clip> {
+    const clip = await this.findById(clipId);
+
+    if (clip.format !== '9:16') {
+      throw new BadRequestException('Zoom só se aplica a cortes 9:16');
+    }
+    const layout = clip.layout ?? 'blur';
+    if (layout !== 'blur') {
+      throw new BadRequestException('Zoom só se aplica ao layout com vídeo centralizado');
+    }
+    if (clip.status === 'processing' || this.rendering.has(clipId)) {
+      throw new BadRequestException('Aguarde o processamento atual terminar');
+    }
+
+    const zoom = Math.min(2, Math.max(0.5, centerZoom));
+    const shouldRerender = rerender === true;
+
+    const updated = await this.repository.update(clipId, {
+      centerZoom: zoom,
       ...(shouldRerender
         ? {
             status: 'processing' as const,
@@ -251,7 +336,8 @@ export class ClipsService {
     this.rendering.add(clipId);
 
     try {
-      const clip = await this.findById(clipId);
+      const clip = await this.repository.findById(clipId);
+      if (!clip) return;
       if (!this.captions) throw new Error('CaptionService indisponível');
 
       const transcriptPath = this.storage.resolveSafePath(
@@ -305,7 +391,7 @@ export class ClipsService {
         throw new Error('Cancelado pelo usuário');
       }
 
-      await this.repository.update(clipId, {
+      await this.updateClipIfExists(clipId, {
         status: 'completed',
         progress: 100,
         burnCaptions: true,
@@ -314,10 +400,11 @@ export class ClipsService {
         errorMessage: undefined,
       });
     } catch (err) {
+      if (err instanceof NotFoundException) return;
       const cancelled = this.cancelled.has(clipId) || /cancelad/i.test((err as Error).message || '');
       this.logger.error(`Falha ao queimar legendas ${clipId}: ${(err as Error).message}`);
-      await this.repository.update(clipId, {
-        status: cancelled ? 'failed' : 'failed',
+      await this.updateClipIfExists(clipId, {
+        status: 'failed',
         progress: 0,
         burnCaptions: true,
         errorMessage: cancelled
@@ -430,7 +517,8 @@ export class ClipsService {
     let lastProgressWrite = 0;
 
     try {
-      const clip = await this.findById(clipId);
+      const clip = await this.repository.findById(clipId);
+      if (!clip) return;
       const project = await this.projectsService.findById(clip.projectId);
       const inputPath = this.projectsService.getOriginalFilePath(project);
 
@@ -454,7 +542,7 @@ export class ClipsService {
           const track = await this.faceTrack.analyze(inputPath, clip.startTime, clip.endTime, 14);
           cropCenterX = track.averageX;
           cropXExpression = track.cropXExpression;
-          if (clip.layout !== 'title' && cropCenterXBottom == null) {
+          if (clip.layout === 'stack' && cropCenterXBottom == null) {
             cropCenterXBottom = track.averageSecondaryX;
             cropXExpressionBottom = track.cropXExpressionSecondary;
           }
@@ -484,7 +572,7 @@ export class ClipsService {
         startTime: clip.startTime,
         endTime: clip.endTime,
         format: clip.format,
-        layout: clip.layout ?? (clip.format === '9:16' ? 'title' : 'crop'),
+        layout: clip.layout ?? (clip.format === '9:16' ? 'blur' : 'crop'),
         cropCenterX,
         cropXExpression: typeof clip.cropCenterX === 'number' ? undefined : cropXExpression,
         cropCenterXBottom,
@@ -492,6 +580,7 @@ export class ClipsService {
           typeof clip.cropCenterXBottom === 'number' ? undefined : cropXExpressionBottom,
         titleText: clip.title,
         titleCta: clip.titleCta,
+        centerZoom: clip.centerZoom ?? 1,
         onProgress,
         abortKey: clipId,
       });
@@ -500,19 +589,20 @@ export class ClipsService {
         throw new Error('Cancelado pelo usuário');
       }
 
-      await this.repository.update(clipId, {
+      const completed = await this.updateClipIfExists(clipId, {
         status: 'completed',
         progress: 100,
         outputFile: `clips/${outputFile}`,
         captionsFile: undefined,
         errorMessage: undefined,
       });
+      if (!completed) return;
 
       // Preferência de legendas: aplica burn após o render limpo
-      const refreshed = await this.findById(clipId);
-      if (refreshed.burnCaptions && this.captions && !this.cancelled.has(clipId)) {
+      const refreshed = await this.repository.findById(clipId);
+      if (refreshed?.burnCaptions && this.captions && !this.cancelled.has(clipId)) {
         this.rendering.delete(clipId);
-        await this.repository.update(clipId, {
+        await this.updateClipIfExists(clipId, {
           status: 'processing',
           progress: 0,
         });
@@ -520,9 +610,10 @@ export class ClipsService {
         return;
       }
     } catch (err) {
+      if (err instanceof NotFoundException) return;
       const cancelled = this.cancelled.has(clipId) || /cancelad/i.test((err as Error).message || '');
       this.logger.error(`Falha ao renderizar corte ${clipId}: ${(err as Error).message}`);
-      await this.repository.update(clipId, {
+      await this.updateClipIfExists(clipId, {
         status: 'failed',
         progress: 0,
         errorMessage: cancelled

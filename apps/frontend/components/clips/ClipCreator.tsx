@@ -22,7 +22,7 @@ interface ClipCreatorProps {
 }
 
 const FORMATS: ClipAspectRatio[] = ['16:9', '9:16', '1:1'];
-const LAYOUTS: ClipLayout[] = ['title', 'crop'];
+const LAYOUTS: ClipLayout[] = ['blur', 'title', 'stack', 'crop'];
 
 export function ClipCreator({
   startMark,
@@ -35,7 +35,7 @@ export function ClipCreator({
   onCreateClip,
 }: ClipCreatorProps) {
   const [format, setFormat] = useState<ClipAspectRatio>('9:16');
-  const [layoutLocal, setLayoutLocal] = useState<ClipLayout>('title');
+  const [layoutLocal, setLayoutLocal] = useState<ClipLayout>('blur');
   const layout = layoutProp ?? layoutLocal;
   const [title, setTitle] = useState('');
   const [titleCta, setTitleCta] = useState('DESLIZE PARA SABER MAIS');
@@ -114,9 +114,13 @@ export function ClipCreator({
                       : 'rounded-md border border-surface-border px-2.5 py-1 text-xs font-medium text-zinc-400 hover:text-zinc-200'
                   }
                   title={
-                    l === 'title'
-                      ? 'Vídeo em cima, descrição embaixo'
-                      : 'Vídeo preenchendo a tela 9:16 inteira'
+                    l === 'blur'
+                      ? 'Vídeo centralizado com fundo desfocado (estilo Shorts)'
+                      : l === 'title'
+                        ? 'Vídeo em cima, descrição embaixo'
+                        : l === 'stack'
+                          ? 'Dois painéis de vídeo empilhados'
+                          : 'Vídeo preenchendo a tela 9:16 inteira'
                   }
                 >
                   {CLIP_LAYOUT_LABELS[l]}

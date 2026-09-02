@@ -23,7 +23,7 @@ export default function ProjectEditorPage() {
   const projectId = params.id;
 
   const { project, loading, error, retryDownload, refetch } = useProject(projectId);
-  const { clips, createClip, renderClip, deleteClip, cancelClip, cancelPending, toggleCaptions, setClipLayout, refetch: refetchClips } =
+  const { clips, createClip, renderClip, deleteClip, cancelClip, cancelPending, toggleCaptions, setClipLayout, updateClipText, setClipZoom, refetch: refetchClips } =
     useClips(projectId);
   const { push } = useToast();
 
@@ -46,7 +46,7 @@ export default function ProjectEditorPage() {
   const [cropGuideXBottom, setCropGuideXBottom] = useState(0.62);
   const [cropManualLock, setCropManualLock] = useState(false);
   const [faceTrackingEnabled, setFaceTrackingEnabled] = useState(true);
-  const [previewLayout, setPreviewLayout] = useState<ClipLayout>('title');
+  const [previewLayout, setPreviewLayout] = useState<ClipLayout>('blur');
 
   const activeCaption =
     transcript?.segments.find((s) => currentTime >= s.start && currentTime < s.end)?.text ?? null;
@@ -324,14 +324,13 @@ export default function ProjectEditorPage() {
                 },
               )
             }
-            onGenerateViralClips={() =>
+            onGenerateViralClips={(layout) =>
               runJob(
                 () =>
                   projectsApi.autoClips(projectId, {
-                    render: true,
+                    render: false,
                     format: '9:16',
-                    layout: 'title',
-                    burnCaptions: true,
+                    layout,
                   }),
                 async () => {
                   await loadAnalysis();
@@ -348,7 +347,9 @@ export default function ProjectEditorPage() {
 
           <ClipList
             clips={clips}
+            transcript={transcript}
             generating={aiBusy}
+            sourceVideoUrl={project ? projectsApi.videoStreamUrl(project.id) : undefined}
             onRender={renderClip}
             onToggleCaptions={async (clipId, enabled) => {
               const updated = await toggleCaptions(clipId, enabled);
@@ -369,8 +370,25 @@ export default function ProjectEditorPage() {
                 description:
                   layout === 'title'
                     ? 'Re-renderizando com vídeo em cima e descrição embaixo…'
-                    : 'Re-renderizando em 9:16 completo…',
+                    : layout === 'stack'
+                      ? 'Re-renderizando com dois painéis de vídeo…'
+                      : layout === 'blur'
+                        ? 'Re-renderizando com vídeo centralizado e fundo desfocado…'
+                        : 'Re-renderizando em 9:16 completo…',
               });
+              return updated;
+            }}
+            onUpdateText={async (clipId, payload) => {
+              const updated = await updateClipText(clipId, payload);
+              push({
+                kind: 'info',
+                title: 'Texto atualizado',
+                description: 'Re-renderizando o corte com o novo texto…',
+              });
+              return updated;
+            }}
+            onSetZoom={async (clipId, centerZoom) => {
+              const updated = await setClipZoom(clipId, centerZoom, false);
               return updated;
             }}
             onDelete={async (clipId) => {
